@@ -5,7 +5,7 @@ from typing import Dict, Set, Optional, List
 import httpx
 import os
 from supabase import create_client, Client
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 import logging
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -14,35 +14,48 @@ load_dotenv()
 
 class SubscriptionService:
     def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+        
+        # Initialize Supabase client with your credentials
         self.supabase: Client = create_client(
             os.getenv("SUPABASE_URL"),
             os.getenv("SUPABASE_KEY")
         )
+        
+        # Verify database connection
+        self._check_database_connection()
+
         self.scheduler = AsyncIOScheduler()
-        self.scheduler.start()
-        self.setup_jobs()
-        self.logger = logging.getLogger(__name__)
+        # Don't start scheduler here, we'll do it in start_scheduler()
         self.http_client = httpx.AsyncClient()
 
-    def setup_jobs(self):
-        # Price check job
-        self.scheduler.add_job(
-            self.check_price_changes,
-            IntervalTrigger(minutes=5),
-            id='price_check'
-        )
-        # Data cleanup job
-        self.scheduler.add_job(
-            self.cleanup_old_data,
-            IntervalTrigger(hours=24),
-            id='data_cleanup'
-        )
-        # Analytics job
-        self.scheduler.add_job(
-            self.update_analytics,
-            IntervalTrigger(hours=1),
-            id='analytics'
-        )
+    def _check_database_connection(self):
+        try:
+            # Try to fetch one record to test connection
+            response = self.supabase.table('price_history').select('*').limit(1).execute()
+            self.logger.info("Successfully connected to Supabase database")
+        except Exception as e:
+            self.logger.error(f"Failed to connect to database: {str(e)}")
+            raise
+
+    async def start_scheduler(self):
+        """Start the scheduler after event loop is running"""
+        if not self.scheduler.running:
+            self.scheduler.start()
+            self.scheduler.add_job(
+                self._check_price_alerts,
+                trigger=IntervalTrigger(minutes=5),
+                id='price_alerts',
+                replace_existing=True
+            )
+            self.logger.info("Price alerts scheduler started")
+
+    async def stop_scheduler(self):
+        """Stop the scheduler"""
+        if self.scheduler.running:
+            self.scheduler.shutdown()
+            self.logger.info("Price alerts scheduler stopped")
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def send_telegram_message(self, user_id: int, message: str):
@@ -64,21 +77,21 @@ class SubscriptionService:
     async def cleanup_old_data(self):
         try:
             # Cleanup old price history (keep last 30 days)
-            cutoff = datetime.utcnow() - timedelta(days=30)
+            cutoff = datetime.now(UTC) - timedelta(days=30)
             self.supabase.table("price_history")\
                 .delete()\
                 .lt("timestamp", cutoff.isoformat())\
                 .execute()
 
             # Cleanup old notifications (keep last 90 days)
-            cutoff = datetime.utcnow() - timedelta(days=90)
+            cutoff = datetime.now(UTC) - timedelta(days=90)
             self.supabase.table("notification_logs")\
                 .delete()\
                 .lt("sent_at", cutoff.isoformat())\
                 .execute()
 
             # Cleanup inactive subscriptions (no updates in 30 days)
-            cutoff = datetime.utcnow() - timedelta(days=30)
+            cutoff = datetime.now(UTC) - timedelta(days=30)
             self.supabase.table("subscriptions")\
                 .delete()\
                 .lt("updated_at", cutoff.isoformat())\
@@ -112,7 +125,7 @@ class SubscriptionService:
                     .upsert({
                         "ticker": ticker,
                         "trend": trend,
-                        "updated_at": datetime.utcnow().isoformat()
+                        "updated_at": datetime.now(UTC).isoformat()
                     })\
                     .execute()
         except Exception as e:
@@ -180,8 +193,8 @@ class SubscriptionService:
                 "ticker": ticker,
                 "threshold": threshold,
                 "last_price": None,
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat()
+                "created_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat()
             }
             result = self.supabase.table("subscriptions").insert(data).execute()
             if not result.data:
@@ -233,7 +246,7 @@ class SubscriptionService:
         try:
             data = {
                 "last_price": price,
-                "updated_at": datetime.utcnow().isoformat()
+                "updated_at": datetime.now(UTC).isoformat()
             }
             result = self.supabase.table("subscriptions").update(data).eq("user_id", user_id).eq("ticker", ticker).execute()
             if not result.data:
@@ -250,11 +263,15 @@ class SubscriptionService:
             data = {
                 "ticker": ticker,
                 "price": price,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(UTC).isoformat(),
+                "change_24h": 0.0
             }
-            self.supabase.table("price_history").insert(data).execute()
+            result = self.supabase.table("price_history").insert(data).execute()
+            self.logger.info(f"Successfully stored price history for {ticker}: {data}")
+            return result.data
         except Exception as e:
             self.logger.error(f"Error storing price history: {str(e)}")
+            raise
 
     async def _store_notification(self, user_id: int, ticker: str, message: str, notification_type: str):
         try:
@@ -263,14 +280,14 @@ class SubscriptionService:
                 "ticker": ticker,
                 "notification_type": notification_type,
                 "message": message,
-                "sent_at": datetime.utcnow().isoformat(),
+                "sent_at": datetime.now(UTC).isoformat(),
                 "status": "sent"
             }
             self.supabase.table("notification_logs").insert(data).execute()
         except Exception as e:
             self.logger.error(f"Error storing notification: {str(e)}")
 
-    async def check_price_changes(self):
+    async def _check_price_alerts(self):
         try:
             subscriptions = await self.get_subscriptions()
             for user_id, user_subs in subscriptions.items():
@@ -286,7 +303,7 @@ class SubscriptionService:
                     except Exception as e:
                         self.logger.error(f"Error checking price for {ticker}: {str(e)}")
         except Exception as e:
-            self.logger.error(f"Error in check_price_changes: {str(e)}")
+            self.logger.error(f"Error in _check_price_alerts: {str(e)}")
 
     async def _check_price_change(self, user_id: int, ticker: str, current_price: float, threshold: float):
         try:
@@ -307,13 +324,35 @@ class SubscriptionService:
 
     async def get_price_history(self, ticker: str, hours: int = 24) -> List[Dict]:
         try:
-            cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
+            self.logger.info(f"Fetching price history for {ticker} since {cutoff_time}")
+            
             result = self.supabase.table("price_history")\
                 .select("*")\
                 .eq("ticker", ticker)\
                 .gte("timestamp", cutoff_time.isoformat())\
                 .order("timestamp")\
                 .execute()
+            
+            self.logger.info(f"Found {len(result.data)} price history entries for {ticker}")
+            
+            if not result.data:
+                # If no history exists, fetch current price and store it
+                self.logger.info(f"No history found for {ticker}, fetching current price")
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        f"http://{os.getenv('BACKEND_HOST')}:{os.getenv('BACKEND_PORT')}/api/price/{ticker}"
+                    )
+                    if response.status_code == 200:
+                        current_price = response.json()['price']
+                        await self._store_price_history(ticker, current_price)
+                        return [{
+                            "ticker": ticker,
+                            "price": current_price,
+                            "timestamp": datetime.now(UTC).isoformat(),
+                            "change_24h": 0.0
+                        }]
+            
             return result.data
         except Exception as e:
             self.logger.error(f"Error getting price history: {str(e)}")
@@ -327,6 +366,7 @@ class SubscriptionService:
                 .order("sent_at", desc=True)\
                 .limit(limit)\
                 .execute()
+            
             return result.data
         except Exception as e:
             self.logger.error(f"Error getting user notifications: {str(e)}")

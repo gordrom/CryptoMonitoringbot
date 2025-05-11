@@ -13,7 +13,7 @@ class CMCService:
             'Accept': 'application/json'
         }
 
-    async def get_price(self, ticker: str) -> float:
+    async def get_price(self, ticker: str) -> dict:
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.base_url}/cryptocurrency/quotes/latest",
@@ -25,4 +25,4 @@ class CMCService:
                 raise Exception(f"Failed to fetch price for {ticker}")
             
             data = response.json()
-            return data['data'][ticker]['quote']['USD']['price'] 
+            return data['data'][ticker] 

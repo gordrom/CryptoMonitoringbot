@@ -15,6 +15,7 @@ import os
 import time
 from dotenv import load_dotenv
 import logging
+from typing import Annotated
 
 load_dotenv()
 
@@ -43,7 +44,7 @@ app.add_middleware(
 # API Key authentication
 api_key_header = APIKeyHeader(name="X-API-Key")
 
-async def get_api_key(api_key: str = Depends(api_key_header)):
+async def get_api_key(api_key: Annotated[str, Depends(api_key_header)]):
     if api_key != os.getenv("API_KEY"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -70,8 +71,23 @@ async def health_check():
 @app.get("/api/price/{ticker}", response_model=PriceResponse, responses={400: {"model": ErrorResponse}})
 async def get_price(ticker: str, api_key: str = Depends(get_api_key)):
     try:
-        price = await cmc_service.get_price(ticker)
-        return PriceResponse(price=price, timestamp=int(time.time()))
+        data = await cmc_service.get_price(ticker)
+        price = data["quote"]["USD"]["price"]
+        change_24h = data["quote"]["USD"]["percent_change_24h"]
+        trend = await subscription_service._calculate_price_trend(ticker)
+        
+        message = f"Current price of {ticker}: ${price:.2f}\n"
+        message += f"24h change: {change_24h:.2f}%\n"
+        message += f"Trend: {trend}"
+        
+        return PriceResponse(
+            ticker=ticker,
+            price=price,
+            change_24h=change_24h,
+            trend=trend,
+            message=message,
+            timestamp=int(time.time())
+        )
     except Exception as e:
         logger.error(f"Error fetching price for {ticker}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -80,7 +96,14 @@ async def get_price(ticker: str, api_key: str = Depends(get_api_key)):
 async def get_forecast(ticker: str, api_key: str = Depends(get_api_key)):
     try:
         forecast = await gpt_service.get_forecast(ticker)
-        return ForecastResponse(forecast=forecast, timestamp=int(time.time()))
+        message = f"📊 Forecast for {ticker}:\n\n{forecast}"
+        return ForecastResponse(
+            ticker=ticker,
+            forecast=forecast,
+            message=message,
+            confidence=0.8,  # Placeholder for confidence score
+            timestamp=int(time.time())
+        )
     except Exception as e:
         logger.error(f"Error generating forecast for {ticker}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -88,8 +111,14 @@ async def get_forecast(ticker: str, api_key: str = Depends(get_api_key)):
 @app.post("/api/subscribe/{ticker}", response_model=dict, responses={400: {"model": ErrorResponse}})
 async def subscribe(ticker: str, request: SubscriptionRequest, api_key: str = Depends(get_api_key)):
     try:
+        # Get current price for confirmation message
+        data = await cmc_service.get_price(ticker)
+        current_price = data["quote"]["USD"]["price"]
+        
         await subscription_service.add_subscription(request.user_id, ticker, request.threshold)
-        return {"status": "success"}
+        return {
+            "message": f"Subscription added successfully! You will be notified when {ticker} changes by {request.threshold}% from ${current_price:.2f}"
+        }
     except Exception as e:
         logger.error(f"Error subscribing {request.user_id} to {ticker}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -98,7 +127,68 @@ async def subscribe(ticker: str, request: SubscriptionRequest, api_key: str = De
 async def unsubscribe(ticker: str, user_id: int, api_key: str = Depends(get_api_key)):
     try:
         await subscription_service.remove_subscription(user_id, ticker)
-        return {"status": "success"}
+        return {
+            "message": f"Successfully unsubscribed from {ticker} price alerts"
+        }
     except Exception as e:
         logger.error(f"Error unsubscribing {user_id} from {ticker}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/subscriptions", response_model=dict, responses={400: {"model": ErrorResponse}})
+async def get_subscriptions(user_id: int, api_key: str = Depends(get_api_key)):
+    try:
+        subscriptions = await subscription_service.get_user_subscriptions(user_id)
+        if not subscriptions:
+            return {"message": "You have no active subscriptions"}
+        
+        response = []
+        for sub in subscriptions:
+            data = await cmc_service.get_price(sub["ticker"])
+            current_price = data["quote"]["USD"]["price"]
+            change = ((current_price - sub["last_price"]) / sub["last_price"]) * 100 if sub["last_price"] else 0
+            response.append({
+                "ticker": sub["ticker"],
+                "threshold": sub["threshold"],
+                "current_price": current_price,
+                "last_price": sub["last_price"],
+                "change_since_subscription": f"{change:.2f}%"
+            })
+        
+        return {"subscriptions": response}
+    except Exception as e:
+        logger.error(f"Error getting subscriptions: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/price/history/{ticker}", response_model=dict, responses={400: {"model": ErrorResponse}})
+async def get_price_history(ticker: str, hours: int = 24, api_key: str = Depends(get_api_key)):
+    try:
+        history = await subscription_service.get_price_history(ticker, hours)
+        if not history:
+            return {"message": f"No price history available for {ticker}"}
+        
+        # Format history for better readability
+        formatted_history = [
+            {
+                "timestamp": h["timestamp"],
+                "price": f"${h['price']:.2f}",
+                "change_24h": f"{h.get('change_24h', 0):.2f}%"
+            }
+            for h in history
+        ]
+        
+        return {"history": formatted_history}
+    except Exception as e:
+        logger.error(f"Error getting price history: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/notifications", response_model=dict, responses={400: {"model": ErrorResponse}})
+async def get_notifications(user_id: int, limit: int = 10, api_key: str = Depends(get_api_key)):
+    try:
+        notifications = await subscription_service.get_user_notifications(user_id, limit)
+        if not notifications:
+            return {"message": "No notifications found"}
+        
+        return {"notifications": notifications}
+    except Exception as e:
+        logger.error(f"Error getting notifications: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e)) 
