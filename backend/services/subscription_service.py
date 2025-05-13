@@ -299,7 +299,11 @@ class SubscriptionService:
                 "price": price,
                 "timestamp": datetime.now(UTC).isoformat()
             }
-            result = self.supabase.table("price_history").insert(data).execute()
+            result = await self._execute_db_operation(
+                lambda: self.supabase.table("price_history").insert(data).execute()
+            )
+            if not result or not result.data:
+                raise Exception("Failed to store price history")
             self.logger.info(f"Successfully stored price history for {ticker}: {data}")
             return result.data
         except Exception as e:
@@ -372,20 +376,23 @@ class SubscriptionService:
             
             if not result or not result.data:
                 self.logger.info(f"No history found for {ticker}, fetching current price")
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(
-                        f"http://{os.getenv('BACKEND_HOST')}:{os.getenv('BACKEND_PORT')}/api/price/{ticker}",
-                        headers={"X-API-Key": os.getenv("API_KEY")}
-                    )
-                    if response.status_code == 200:
-                        data = response.json()
-                        current_price = data['price']
-                        await self._store_price_history(ticker, current_price)
-                        return [{
-                            "ticker": ticker,
-                            "price": current_price,
-                            "timestamp": datetime.now(UTC).isoformat()
-                        }]
+                try:
+                    async with httpx.AsyncClient() as client:
+                        response = await client.get(
+                            f"http://{os.getenv('BACKEND_HOST')}:{os.getenv('BACKEND_PORT')}/api/price/{ticker}",
+                            headers={"X-API-Key": os.getenv("API_KEY")}
+                        )
+                        if response.status_code == 200:
+                            data = response.json()
+                            current_price = data['price']
+                            await self._store_price_history(ticker, current_price)
+                            return [{
+                                "ticker": ticker,
+                                "price": current_price,
+                                "timestamp": datetime.now(UTC).isoformat()
+                            }]
+                except Exception as e:
+                    self.logger.error(f"Error fetching current price: {str(e)}")
                 return []
             
             self.logger.info(f"Found {len(result.data)} price history entries for {ticker}")
