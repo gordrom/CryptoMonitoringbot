@@ -253,8 +253,7 @@ async def get_price_history(ticker: str, hours: int = 24, api_key: str = Depends
         formatted_history = [
             {
                 "timestamp": h["timestamp"],
-                "price": f"${h['price']:.2f}",
-                "change_24h": f"{h.get('change_24h', 0):.2f}%"
+                "price": f"${h['price']:.2f}"
             }
             for h in history
         ]
