@@ -10,7 +10,7 @@ Environment=PYTHONPATH=/home/dango/CryptoMonitoringbot
 Environment=PYTHONUNBUFFERED=1
 Environment=PATH=/home/dango/CryptoMonitoringbot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=VIRTUAL_ENV=/home/dango/CryptoMonitoringbot/venv
-Environment=DEEPSEEK_API_KEY=your_deepseek_api_key_here
+Environment=OPENROUTER_API_KEY=your_openrouter_api_key
 ExecStart=/home/dango/CryptoMonitoringbot/venv/bin/python /home/dango/CryptoMonitoringbot/run_backend.py
 Restart=always
 RestartSec=10
