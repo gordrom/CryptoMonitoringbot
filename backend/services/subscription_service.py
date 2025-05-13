@@ -8,7 +8,8 @@ from supabase import create_client, Client
 from datetime import datetime, timedelta, UTC
 import logging
 from dotenv import load_dotenv
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import postgrest.exceptions
 
 load_dotenv()
 
@@ -29,7 +30,16 @@ class SubscriptionService:
         self.scheduler = AsyncIOScheduler()
         # Don't start scheduler here, we'll do it in start_scheduler()
         self.http_client = httpx.AsyncClient()
+        
+        # Connection pool settings
+        self.max_retries = 3
+        self.retry_delay = 1  # seconds
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((postgrest.exceptions.APIError, ConnectionError))
+    )
     def _check_database_connection(self):
         try:
             # Try to fetch one record to test connection
@@ -38,6 +48,28 @@ class SubscriptionService:
         except Exception as e:
             self.logger.error(f"Failed to connect to database: {str(e)}")
             raise
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((postgrest.exceptions.APIError, ConnectionError))
+    )
+    async def _execute_db_operation(self, operation):
+        """Execute a database operation with retry logic"""
+        try:
+            return await operation()
+        except Exception as e:
+            self.logger.error(f"Database operation failed: {str(e)}")
+            raise
+
+    async def log_request(self, log_data: dict):
+        """Log a request with retry logic"""
+        try:
+            await self._execute_db_operation(
+                lambda: self.supabase.table("request_logs").insert(log_data).execute()
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to log request: {str(e)}")
 
     async def start_scheduler(self):
         """Start the scheduler after event loop is running"""

@@ -1,6 +1,8 @@
 from supabase import create_client, Client
 import logging
 from datetime import datetime, UTC
+import time
+import json
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -92,6 +94,31 @@ def init_db():
         logger.info("Successfully deleted test record from subscriptions")
     except Exception as e:
         logger.error(f"Error with subscriptions table: {str(e)}")
+        raise
+
+    # Check and create request_logs table
+    try:
+        # Try to insert a test record
+        test_request_log = {
+            "request_id": "test_" + str(int(time.time())),
+            "timestamp": datetime.now(UTC).isoformat(),
+            "method": "GET",
+            "url": "http://test.com/test",
+            "client_host": "127.0.0.1",
+            "query_params": {"test": "test"},
+            "request_body": None,
+            "response_body": {"status": "ok"},
+            "status_code": 200,
+            "processing_time": 0.1
+        }
+        result = supabase.table("request_logs").insert(test_request_log).execute()
+        logger.info("Successfully inserted test record into request_logs")
+        
+        # Delete the test record
+        supabase.table("request_logs").delete().eq("request_id", test_request_log["request_id"]).execute()
+        logger.info("Successfully deleted test record from request_logs")
+    except Exception as e:
+        logger.error(f"Error with request_logs table: {str(e)}")
         raise
 
     # Clean up test user

@@ -10,7 +10,7 @@ import httpx
 import logging
 from backend.services.subscription_service import SubscriptionService
 from backend.services.cmc_service import CMCService
-from backend.services.gpt_service import GPTService
+from backend.services.deepseek_service import DeepSeekService
 
 load_dotenv()
 
@@ -23,7 +23,7 @@ class CryptoBot:
         self,
         subscription_service: Optional[SubscriptionService] = None,
         cmc_service: Optional[CMCService] = None,
-        gpt_service: Optional[GPTService] = None
+        deepseek_service: Optional[DeepSeekService] = None
     ):
         self.bot = Bot(token=os.getenv('TELEGRAM_BOT_TOKEN'))
         self.dp = Dispatcher()
@@ -34,7 +34,7 @@ class CryptoBot:
         # Initialize services
         self.subscription_service = subscription_service or SubscriptionService()
         self.cmc_service = cmc_service or CMCService()
-        self.gpt_service = gpt_service or GPTService()
+        self.deepseek_service = deepseek_service or DeepSeekService()
         
         self.setup_handlers()
         self.setup_logging()

@@ -1,0 +1,19 @@
+[Unit]
+Description=Crypto Monitor Bot Service
+After=network.target crypto-monitor-backend.service
+Requires=crypto-monitor-backend.service
+
+[Service]
+Type=simple
+User=dango
+WorkingDirectory=/home/dango/CryptoMonitoringbot
+Environment=PYTHONPATH=/home/dango/CryptoMonitoringbot
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/dango/CryptoMonitoringbot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=VIRTUAL_ENV=/home/dango/CryptoMonitoringbot/venv
+ExecStart=/home/dango/CryptoMonitoringbot/venv/bin/python /home/dango/CryptoMonitoringbot/run_bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 

@@ -1,8 +1,8 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from .services.cmc_service import CMCService
-from .services.gpt_service import GPTService
+from .services.deepseek_service import DeepSeekService
 from .services.subscription_service import SubscriptionService
 from .models import (
     PriceResponse,
@@ -16,6 +16,8 @@ import time
 from dotenv import load_dotenv
 import logging
 from typing import Annotated
+import json
+from datetime import datetime, UTC
 
 load_dotenv()
 
@@ -54,11 +56,84 @@ async def get_api_key(api_key: Annotated[str, Depends(api_key_header)]):
 
 # Initialize services
 cmc_service = CMCService()
-gpt_service = GPTService()
+deepseek_service = DeepSeekService()
 subscription_service = SubscriptionService()
 
 # Store startup time for uptime calculation
 startup_time = time.time()
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    # Get request details
+    timestamp = datetime.now(UTC).isoformat()
+    method = request.method
+    url = str(request.url)
+    
+    # Extract endpoint and parameters
+    path = request.url.path
+    query_params = dict(request.query_params)
+    
+    # Get request body if it exists
+    body = None
+    if method in ["POST", "PUT"]:
+        try:
+            body = await request.json()
+        except:
+            body = None
+    
+    # Process request
+    start_time = time.time()
+    try:
+        response = await call_next(request)
+        status = "success"
+        error_message = None
+    except Exception as e:
+        status = "error"
+        error_message = str(e)
+        raise
+    finally:
+        processing_time = time.time() - start_time
+        
+        # Extract relevant data based on endpoint
+        log_data = {
+            "timestamp": timestamp,
+            "endpoint": path,
+            "status": status,
+            "error_message": error_message
+        }
+        
+        # Add specific data based on endpoint
+        if "/api/price/" in path:
+            ticker = path.split("/")[-1]
+            log_data.update({
+                "ticker": ticker,
+                "price": body.get("price") if body else None
+            })
+        elif "/api/forecast/" in path:
+            ticker = path.split("/")[-1]
+            log_data.update({
+                "ticker": ticker,
+                "forecast": body.get("forecast") if body else None
+            })
+        elif "/api/subscriptions" in path:
+            if body:
+                log_data.update({
+                    "user_id": body.get("user_id"),
+                    "ticker": body.get("ticker")
+                })
+            elif query_params:
+                log_data.update({
+                    "user_id": query_params.get("user_id"),
+                    "ticker": query_params.get("ticker")
+                })
+        
+        # Store log
+        try:
+            await subscription_service.log_request(log_data)
+        except Exception as e:
+            logger.error(f"Error logging request: {str(e)}")
+    
+    return response
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -95,7 +170,7 @@ async def get_price(ticker: str, api_key: str = Depends(get_api_key)):
 @app.get("/api/forecast/{ticker}", response_model=ForecastResponse, responses={400: {"model": ErrorResponse}})
 async def get_forecast(ticker: str, api_key: str = Depends(get_api_key)):
     try:
-        forecast = await gpt_service.get_forecast(ticker)
+        forecast = await deepseek_service.get_forecast(ticker)
         message = f"📊 Forecast for {ticker}:\n\n{forecast}"
         return ForecastResponse(
             ticker=ticker,
@@ -108,23 +183,23 @@ async def get_forecast(ticker: str, api_key: str = Depends(get_api_key)):
         logger.error(f"Error generating forecast for {ticker}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.post("/api/subscribe/{ticker}", response_model=dict, responses={400: {"model": ErrorResponse}})
-async def subscribe(ticker: str, request: SubscriptionRequest, api_key: str = Depends(get_api_key)):
+@app.post("/api/subscriptions", response_model=dict, responses={400: {"model": ErrorResponse}})
+async def subscribe(request: SubscriptionRequest, api_key: str = Depends(get_api_key)):
     try:
         # Get current price for confirmation message
-        data = await cmc_service.get_price(ticker)
+        data = await cmc_service.get_price(request.ticker)
         current_price = data["quote"]["USD"]["price"]
         
-        await subscription_service.add_subscription(request.user_id, ticker, request.threshold)
+        await subscription_service.add_subscription(request.user_id, request.ticker, request.threshold)
         return {
-            "message": f"Subscription added successfully! You will be notified when {ticker} changes by {request.threshold}% from ${current_price:.2f}"
+            "message": f"Subscription added successfully! You will be notified when {request.ticker} changes by {request.threshold}% from ${current_price:.2f}"
         }
     except Exception as e:
-        logger.error(f"Error subscribing {request.user_id} to {ticker}: {str(e)}")
+        logger.error(f"Error subscribing {request.user_id} to {request.ticker}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.delete("/api/unsubscribe/{ticker}", response_model=dict, responses={400: {"model": ErrorResponse}})
-async def unsubscribe(ticker: str, user_id: int, api_key: str = Depends(get_api_key)):
+@app.delete("/api/subscriptions", response_model=dict, responses={400: {"model": ErrorResponse}})
+async def unsubscribe(user_id: int, ticker: str, api_key: str = Depends(get_api_key)):
     try:
         await subscription_service.remove_subscription(user_id, ticker)
         return {
