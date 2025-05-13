@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from bot.bot import CryptoBot
 from backend.services.subscription_service import SubscriptionService
 from backend.services.cmc_service import CMCService
-from backend.services.gpt_service import GPTService
+from backend.services.deepseek_service import DeepSeekService
 
 # Setup logging
 logging.basicConfig(
@@ -19,7 +19,7 @@ async def main():
     # Initialize services
     subscription_service = SubscriptionService()
     cmc_service = CMCService()
-    gpt_service = GPTService()
+    gpt_service = DeepSeekService()
     
     # Initialize bot with services
     bot = CryptoBot(
