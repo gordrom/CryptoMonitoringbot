@@ -329,7 +329,8 @@ class SubscriptionService:
                     try:
                         async with httpx.AsyncClient() as client:
                             response = await client.get(
-                                f"http://{os.getenv('BACKEND_HOST')}:{os.getenv('BACKEND_PORT')}/api/price/{ticker}"
+                                f"http://{os.getenv('BACKEND_HOST')}:{os.getenv('BACKEND_PORT')}/api/price/{ticker}",
+                                headers={"X-API-Key": os.getenv("API_KEY")}
                             )
                             if response.status_code == 200:
                                 current_price = response.json()['price']
@@ -375,16 +376,18 @@ class SubscriptionService:
                 self.logger.info(f"No history found for {ticker}, fetching current price")
                 async with httpx.AsyncClient() as client:
                     response = await client.get(
-                        f"http://{os.getenv('BACKEND_HOST')}:{os.getenv('BACKEND_PORT')}/api/price/{ticker}"
+                        f"http://{os.getenv('BACKEND_HOST')}:{os.getenv('BACKEND_PORT')}/api/price/{ticker}",
+                        headers={"X-API-Key": os.getenv("API_KEY")}
                     )
                     if response.status_code == 200:
-                        current_price = response.json()['price']
+                        data = response.json()
+                        current_price = data['price']
                         await self._store_price_history(ticker, current_price)
                         return [{
                             "ticker": ticker,
                             "price": current_price,
                             "timestamp": datetime.now(UTC).isoformat(),
-                            "change_24h": 0.0
+                            "change_24h": data.get('change_24h', 0.0)
                         }]
             
             return result.data
