@@ -57,7 +57,9 @@ class SubscriptionService:
     async def _execute_db_operation(self, operation):
         """Execute a database operation with retry logic"""
         try:
-            return await operation()
+            # Execute the operation and return the result
+            result = operation()
+            return result
         except Exception as e:
             self.logger.error(f"Database operation failed: {str(e)}")
             raise
