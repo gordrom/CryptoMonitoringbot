@@ -42,12 +42,17 @@ class DeepSeekService:
                         "role": "user",
                         "content": prompt
                     }
-                ]
+                ],
+                stream=False  # Ensure we get the complete response
             )
 
+            # Extract the forecast from the response
             forecast = completion.choices[0].message.content
-            # For now, we'll use a fixed confidence score since the free model doesn't provide one
-            confidence = 0.7
+            self.logger.info(f"Generated forecast for {ticker}: {forecast}")
+
+            # Calculate confidence based on response length and content
+            # This is a simple heuristic - you might want to adjust this
+            confidence = min(0.7 + (len(forecast) / 1000), 0.95)  # Cap at 0.95
 
             return forecast, confidence
 

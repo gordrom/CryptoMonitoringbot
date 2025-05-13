@@ -173,12 +173,19 @@ async def get_forecast(ticker: str, api_key: str = Depends(get_api_key)):
         # Get price history for the last 24 hours
         price_history = await subscription_service.get_price_history(ticker, hours=24)
         
+        if not price_history:
+            raise HTTPException(status_code=400, detail="No price history available for forecasting")
+        
         # Get forecast from DeepSeek
         forecast, confidence = await deepseek_service.get_forecast(ticker, price_history)
         
+        # Store the forecast in history
+        await subscription_service._store_forecast_history(ticker, forecast, confidence)
+        
         return {
             "forecast": forecast,
-            "confidence": confidence
+            "confidence": confidence,
+            "timestamp": datetime.now(UTC).isoformat()
         }
     except Exception as e:
         logger.error(f"Error generating forecast: {str(e)}")
