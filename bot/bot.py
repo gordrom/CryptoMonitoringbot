@@ -167,21 +167,35 @@ class CryptoBot:
     async def _handle_forecast_ticker(self, message: Message, ticker: str):
         try:
             async with httpx.AsyncClient() as client:
+                self.logger.info(f"Fetching forecast for {ticker} from {self.backend_url}/api/forecast/{ticker}")
                 response = await client.get(
                     f"{self.backend_url}/api/forecast/{ticker}",
                     headers={"X-API-Key": self.api_key}
                 )
+                self.logger.info(f"Response status: {response.status_code}")
                 if response.status_code == 200:
                     data = response.json()
-                    await message.answer(
-                        f"📊 Forecast for {ticker}:\n\n"
-                        f"{data['forecast']}\n\n"
-                        f"Confidence: {data['confidence']*100:.1f}%"
-                    )
+                    if "forecast" in data and "confidence" in data:
+                        await message.answer(
+                            f"📊 Forecast for {ticker}:\n\n"
+                            f"{data['forecast']}\n\n"
+                            f"Confidence: {data['confidence']*100:.1f}%"
+                        )
+                    else:
+                        error_msg = f"Invalid response format. Missing required fields. Response: {data}"
+                        self.logger.error(error_msg)
+                        await message.answer("Error: Invalid response format from server.")
                 else:
+                    error_msg = f"Error generating forecast. Status code: {response.status_code}"
+                    try:
+                        error_data = response.json()
+                        error_msg += f", Details: {error_data.get('detail', 'No details')}"
+                    except:
+                        error_msg += f", Response: {response.text}"
+                    self.logger.error(error_msg)
                     await message.answer("Error generating forecast. Please try again.")
         except Exception as e:
-            self.logger.error(f"Error in _handle_forecast_ticker: {str(e)}")
+            self.logger.error(f"Error in _handle_forecast_ticker: {str(e)}", exc_info=True)
             await message.answer("An error occurred. Please try again later.")
 
     async def _handle_subscribe(self, message: Message, ticker: str, threshold: float):

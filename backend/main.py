@@ -175,23 +175,30 @@ async def get_price(ticker: str):
 @app.get("/api/forecast/{ticker}", dependencies=[Depends(verify_api_key)])
 async def get_forecast(ticker: str):
     try:
+        logger.info(f"Generating forecast for {ticker}")
+        
         # Get price history
         history = await subscription_service.get_price_history(ticker, hours=24)
+        logger.info(f"Found {len(history)} price history entries for {ticker}")
         
         # Generate forecast
         forecast = await generate_forecast(ticker, history)
+        logger.info(f"Generated forecast for {ticker}: {forecast[:100]}...")
         
         # Store forecast for accuracy tracking
         await subscription_service.store_forecast(ticker, forecast)
+        logger.info(f"Successfully stored forecast for {ticker}")
         
-        return ForecastResponse(
+        response = ForecastResponse(
             ticker=ticker,
             forecast=forecast,
             confidence=0.8,  # Placeholder for confidence score
             timestamp=datetime.utcnow()
         )
+        logger.info(f"Returning forecast response for {ticker}")
+        return response
     except Exception as e:
-        logger.error(f"Error getting forecast: {str(e)}")
+        logger.error(f"Error getting forecast for {ticker}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/price/history/{ticker}", dependencies=[Depends(verify_api_key)])
