@@ -167,13 +167,7 @@ class SubscriptionService:
             # Update price trends
             for ticker in self._get_active_tickers():
                 trend = await self._calculate_price_trend(ticker)
-                self.supabase.table("price_trends")\
-                    .upsert({
-                        "ticker": ticker,
-                        "trend": trend,
-                        "updated_at": datetime.now(UTC).isoformat()
-                    })\
-                    .execute()
+                await self._ensure_price_trends_entry(ticker, trend)
         except Exception as e:
             self.logger.error(f"Error updating analytics: {str(e)}")
 
@@ -512,3 +506,19 @@ class SubscriptionService:
         except Exception as e:
             self.logger.error(f"Error updating forecast accuracy: {str(e)}")
             # Don't raise the error, just log it 
+
+    async def _ensure_price_trends_entry(self, ticker: str, trend: str) -> None:
+        """Ensure a price trend entry exists for the ticker."""
+        try:
+            # Use upsert operation to either insert or update the record
+            response = await self.supabase.table("price_trends").upsert({
+                "ticker": ticker,
+                "trend": trend,
+                "last_updated": datetime.utcnow().isoformat()
+            }).execute()
+            
+            if response.error:
+                self.logger.error(f"Error upserting price_trends entry: {response.error}")
+        except Exception as e:
+            self.logger.error(f"Error ensuring price_trends entry: {str(e)}")
+            # Don't raise the exception as this is not critical 
