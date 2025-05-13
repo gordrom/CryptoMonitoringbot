@@ -15,7 +15,7 @@ class CMCService:
         # Create client with timeout settings
         self.http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(10.0, connect=5.0),  # 10 seconds total, 5 seconds for connection
-            limits=httpx.Limits(max_retries=3)  # Retry failed requests up to 3 times
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)  # Connection pool limits
         )
 
     async def get_price(self, ticker: str) -> dict:
