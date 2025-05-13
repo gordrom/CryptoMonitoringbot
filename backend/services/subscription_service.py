@@ -297,8 +297,7 @@ class SubscriptionService:
             data = {
                 "ticker": ticker,
                 "price": price,
-                "timestamp": datetime.now(UTC).isoformat(),
-                "change_24h": 0.0
+                "timestamp": datetime.now(UTC).isoformat()
             }
             result = self.supabase.table("price_history").insert(data).execute()
             self.logger.info(f"Successfully stored price history for {ticker}: {data}")
@@ -362,17 +361,16 @@ class SubscriptionService:
             cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
             self.logger.info(f"Fetching price history for {ticker} since {cutoff_time}")
             
-            result = self.supabase.table("price_history")\
-                .select("*")\
-                .eq("ticker", ticker)\
-                .gte("timestamp", cutoff_time.isoformat())\
-                .order("timestamp")\
+            result = await self._execute_db_operation(
+                lambda: self.supabase.table("price_history")
+                .select("*")
+                .eq("ticker", ticker)
+                .gte("timestamp", cutoff_time.isoformat())
+                .order("timestamp")
                 .execute()
+            )
             
-            self.logger.info(f"Found {len(result.data)} price history entries for {ticker}")
-            
-            if not result.data:
-                # If no history exists, fetch current price and store it
+            if not result or not result.data:
                 self.logger.info(f"No history found for {ticker}, fetching current price")
                 async with httpx.AsyncClient() as client:
                     response = await client.get(
@@ -386,11 +384,13 @@ class SubscriptionService:
                         return [{
                             "ticker": ticker,
                             "price": current_price,
-                            "timestamp": datetime.now(UTC).isoformat(),
-                            "change_24h": data.get('change_24h', 0.0)
+                            "timestamp": datetime.now(UTC).isoformat()
                         }]
+                return []
             
+            self.logger.info(f"Found {len(result.data)} price history entries for {ticker}")
             return result.data
+            
         except Exception as e:
             self.logger.error(f"Error getting price history: {str(e)}")
             return []
