@@ -414,4 +414,23 @@ class SubscriptionService:
             return result.data
         except Exception as e:
             self.logger.error(f"Error getting user notifications: {str(e)}")
-            return [] 
+            return []
+
+    async def _store_forecast_history(self, ticker: str, forecast: str, confidence: float):
+        try:
+            data = {
+                "ticker": ticker,
+                "forecast": forecast,
+                "confidence": confidence,
+                "timestamp": datetime.now(UTC).isoformat()
+            }
+            result = await self._execute_db_operation(
+                lambda: self.supabase.table("forecast_history").insert(data).execute()
+            )
+            if not result or not result.data:
+                raise Exception("Failed to store forecast history")
+            self.logger.info(f"Successfully stored forecast history for {ticker}")
+            return result.data
+        except Exception as e:
+            self.logger.error(f"Error storing forecast history: {str(e)}")
+            raise 
