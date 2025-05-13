@@ -167,21 +167,22 @@ async def get_price(ticker: str, api_key: str = Depends(get_api_key)):
         logger.error(f"Error fetching price for {ticker}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.get("/api/forecast/{ticker}", response_model=ForecastResponse, responses={400: {"model": ErrorResponse}})
+@app.get("/api/forecast/{ticker}")
 async def get_forecast(ticker: str, api_key: str = Depends(get_api_key)):
     try:
-        forecast = await deepseek_service.get_forecast(ticker)
-        message = f"📊 Forecast for {ticker}:\n\n{forecast}"
-        return ForecastResponse(
-            ticker=ticker,
-            forecast=forecast,
-            message=message,
-            confidence=0.8,  # Placeholder for confidence score
-            timestamp=int(time.time())
-        )
+        # Get price history for the last 24 hours
+        price_history = await subscription_service.get_price_history(ticker, hours=24)
+        
+        # Get forecast from DeepSeek
+        forecast, confidence = await deepseek_service.get_forecast(ticker, price_history)
+        
+        return {
+            "forecast": forecast,
+            "confidence": confidence
+        }
     except Exception as e:
-        logger.error(f"Error generating forecast for {ticker}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.error(f"Error generating forecast: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error generating forecast")
 
 @app.post("/api/subscriptions", response_model=dict, responses={400: {"model": ErrorResponse}})
 async def subscribe(request: SubscriptionRequest, api_key: str = Depends(get_api_key)):

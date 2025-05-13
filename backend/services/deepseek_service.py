@@ -1,48 +1,56 @@
-from openai import OpenAI
 import os
-from dotenv import load_dotenv
+from openai import OpenAI
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential
+from dotenv import load_dotenv
 
 load_dotenv()
 
 class DeepSeekService:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
-        
-        # Initialize DeepSeek client
         self.client = OpenAI(
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url="https://api.deepseek.com"
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.getenv("OPENROUTER_API_KEY"),
         )
+        self.model = "deepseek/deepseek-prover-v2:free"
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-    async def get_forecast(self, ticker: str) -> str:
-        """Get price forecast for a cryptocurrency using DeepSeek"""
+    async def get_forecast(self, ticker: str, price_history: list) -> tuple[str, float]:
         try:
-            prompt = f"""Analyze the current market conditions and provide a price forecast for {ticker}.
-            Consider:
-            1. Recent price trends
-            2. Market sentiment
-            3. Technical indicators
-            4. Market news and events
-            
-            Provide a concise but comprehensive analysis in 2-3 paragraphs."""
+            # Prepare the prompt with price history
+            price_history_text = "\n".join([
+                f"Price at {entry['timestamp']}: ${entry['price']:.2f}"
+                for entry in price_history
+            ])
 
-            response = self.client.chat.completions.create(
-                model="deepseek-chat",
+            prompt = f"""Based on the following price history for {ticker}, provide a short-term price forecast (next 24 hours):
+            {price_history_text}
+            
+            Please provide:
+            1. A brief analysis of the price trend
+            2. A prediction for the next 24 hours
+            3. Key factors that might influence the price
+            Keep the response concise and focused on actionable insights."""
+
+            completion = self.client.chat.completions.create(
+                extra_headers={
+                    "HTTP-Referer": "https://github.com/gordrom/CryptoMonitoringbot",
+                    "X-Title": "Crypto Monitoring Bot",
+                },
+                model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a cryptocurrency market analyst. Provide clear, data-driven analysis and forecasts."},
-                    {"role": "user", "content": prompt}
-                ],
-                stream=False
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
             )
 
-            forecast = response.choices[0].message.content
-            self.logger.info(f"Successfully generated forecast for {ticker}")
-            return forecast
+            forecast = completion.choices[0].message.content
+            # For now, we'll use a fixed confidence score since the free model doesn't provide one
+            confidence = 0.7
+
+            return forecast, confidence
 
         except Exception as e:
-            self.logger.error(f"Error generating forecast for {ticker}: {str(e)}")
-            raise 
+            self.logger.error(f"Error getting forecast from DeepSeek: {str(e)}")
+            return "Unable to generate forecast at this time.", 0.0 
