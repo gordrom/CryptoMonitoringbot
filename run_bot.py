@@ -19,13 +19,13 @@ async def main():
     # Initialize services
     subscription_service = SubscriptionService()
     cmc_service = CMCService()
-    gpt_service = DeepSeekService()
+    deepseek_service = DeepSeekService()
     
     # Initialize bot with services
     bot = CryptoBot(
         subscription_service=subscription_service,
         cmc_service=cmc_service,
-        gpt_service=gpt_service
+        deepseek_service=deepseek_service
     )
     
     try:
