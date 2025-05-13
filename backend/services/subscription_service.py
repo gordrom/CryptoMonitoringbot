@@ -59,7 +59,19 @@ class SubscriptionService:
         try:
             # Execute the operation and return the result
             result = operation()
+            if not result:
+                raise Exception("Database operation returned no result")
             return result
+        except postgrest.exceptions.APIError as e:
+            if "schema cache" in str(e).lower():
+                # Force refresh schema cache by making a simple query
+                try:
+                    self.supabase.table("forecast_history").select("id").limit(1).execute()
+                except Exception:
+                    pass
+                raise Exception("Schema cache error, please try again")
+            self.logger.error(f"Database API error: {str(e)}")
+            raise
         except Exception as e:
             self.logger.error(f"Database operation failed: {str(e)}")
             raise
@@ -297,7 +309,8 @@ class SubscriptionService:
             data = {
                 "ticker": ticker,
                 "price": price,
-                "timestamp": datetime.now(UTC).isoformat()
+                "timestamp": datetime.now(UTC).isoformat(),
+                "source": "api"  # Add source field
             }
             result = await self._execute_db_operation(
                 lambda: self.supabase.table("price_history").insert(data).execute()
@@ -418,19 +431,84 @@ class SubscriptionService:
 
     async def _store_forecast_history(self, ticker: str, forecast: str, confidence: float):
         try:
+            # First ensure price_trends entry exists
+            try:
+                trend_data = {
+                    "ticker": ticker,
+                    "trend": "neutral",  # Default trend
+                    "updated_at": datetime.now(UTC).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat()
+                }
+                self.supabase.table("price_trends").upsert(trend_data).execute()
+            except Exception as e:
+                self.logger.error(f"Error ensuring price_trends entry: {str(e)}")
+                # Continue anyway as this is not critical
+
             data = {
                 "ticker": ticker,
                 "forecast": forecast,
-                "confidence": confidence,
-                "timestamp": datetime.now(UTC).isoformat()
+                "confidence_score": confidence,
+                "timestamp": datetime.now(UTC).isoformat(),
+                "actual_price": None,  # Will be updated later
+                "accuracy_score": None  # Will be updated later
             }
+            
+            # First try to refresh schema cache
+            try:
+                self.supabase.table("forecast_history").select("id").limit(1).execute()
+            except Exception:
+                pass
+                
             result = await self._execute_db_operation(
                 lambda: self.supabase.table("forecast_history").insert(data).execute()
             )
+            
             if not result or not result.data:
                 raise Exception("Failed to store forecast history")
+                
             self.logger.info(f"Successfully stored forecast history for {ticker}")
             return result.data
+            
         except Exception as e:
             self.logger.error(f"Error storing forecast history: {str(e)}")
-            raise 
+            # Don't raise the error, just log it and return None
+            # This way the forecast will still be returned to the user even if storage fails
+            return None
+
+    async def update_forecast_accuracy(self, ticker: str, forecast_id: int, actual_price: float):
+        """Update forecast accuracy after actual price is known"""
+        try:
+            # Get the forecast
+            result = await self._execute_db_operation(
+                lambda: self.supabase.table("forecast_history")
+                .select("*")
+                .eq("id", forecast_id)
+                .execute()
+            )
+            
+            if not result or not result.data:
+                raise Exception("Forecast not found")
+                
+            forecast = result.data[0]
+            
+            # Calculate accuracy (implement your accuracy calculation logic here)
+            accuracy = self._calculate_forecast_accuracy(forecast["forecast"], actual_price)
+            
+            # Update the forecast record
+            update_data = {
+                "actual_price": actual_price,
+                "accuracy_score": accuracy
+            }
+            
+            await self._execute_db_operation(
+                lambda: self.supabase.table("forecast_history")
+                .update(update_data)
+                .eq("id", forecast_id)
+                .execute()
+            )
+            
+            self.logger.info(f"Updated forecast accuracy for {ticker}")
+            
+        except Exception as e:
+            self.logger.error(f"Error updating forecast accuracy: {str(e)}")
+            # Don't raise the error, just log it 
